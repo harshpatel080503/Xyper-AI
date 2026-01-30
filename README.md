@@ -106,7 +106,7 @@ See the LICENSE file for details.
 
 If you find this work useful, please consider citing the paper (once published):
 ```bibtex
-@article{patel2026agentic,
+@article{xyper2026agentic,
   title={A Governed Agentic AI Framework for Interpretable and Safe Fraud Investigation},
   author={Patel, Harsh Satishkumar and Kava, Urvi Jitendrabhai},
   journal={SN Computer Science},
