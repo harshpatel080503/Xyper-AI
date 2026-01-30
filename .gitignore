@@ -1,0 +1,16 @@
+data/
+datasets/
+models/
+embeddings/
+vectorstore/
+faiss*
+chroma*
+*.pt
+*.pth
+*.pkl
+*.bin
+.ipynb_checkpoints/
+__pycache__/
+venv/
+.env
+Journal Paper/
