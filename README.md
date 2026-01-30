@@ -1,3 +1,4 @@
+# Xyper-AI
 # A Governed Agentic AI Framework for Interpretable and Safe Fraud Investigation
 
 This repository contains the implementation artifacts, system design, and research materials associated with the paper:
