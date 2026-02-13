@@ -76,7 +76,7 @@ The goal is **decision safety and interpretability**, not raw classification acc
 
 ## Paper Status
 
-**Journal: SN Computer Science (Springer Nature)**
+**Journal: International Journal of Data Science and Analytics (Under Consideration)**
 Status: Under editorial processing
 
 > This repository will be updated with revisions and camera-ready versions as the review process progresses.
