@@ -3,7 +3,7 @@
 This repository contains the implementation artifacts, system design, and research materials associated with the paper:
 
 > **A Governed Agentic AI Framework for Interpretable and Safe Fraud Investigation**  
-> *Submitted to SN Computer Science (Springer Nature)*
+> *Journal: International Journal of Data Science and Analytics (Under Consideration)*
 
 The work presents a **governed agentic AI system** for fraud investigation that prioritizes **interpretability, safety, and human oversight** over black-box automation.
 
