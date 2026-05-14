@@ -34,7 +34,8 @@ case = create_fraud_case(df.iloc[0])
 service = InvestigationService()
 
 # ---- Run investigation ----
-report = service.investigate(case)
+report = service.investigate(case, historical_data=df)
+
 
 print("\n============ Final Investigation Report ============\n")
 pprint(report)

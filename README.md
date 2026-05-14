@@ -1,4 +1,6 @@
-# Xyper-AI : A Governed Agentic AI Framework for Interpretable and Safe Fraud Investigation
+# Xyper-AI: A Governed Agentic AI Framework for Interpretable and Safe Fraud Investigation
+
+🚀 **An AI-Driven Investigation System for Modern Banking Safety**
 
 This repository contains the implementation artifacts, system design, and research materials associated with the paper:
 
@@ -9,100 +11,119 @@ The work presents a **governed agentic AI system** for fraud investigation that 
 
 ---
 
-## Motivation
+## 🧠 Core Philosophy: "Evidence vs. Authority"
 
-Financial fraud investigation is a **high-stakes, regulated decision-making problem**.  
-While modern ML models achieve high accuracy, they often lack:
+Traditional fraud detection systems are often "black boxes" that output binary decisions without reasoning. In banking, this is dangerous due to financial loss, customer dissatisfaction, and regulatory violations. This framework separates evidence generation from decision authority—a native reasoning system designed for safety and interpretability.
 
-- Explainability  
-- Confidence calibration  
-- Explicit safety and governance controls  
+Unlike typical ML models, this system does not predict labels. It performs **AI-driven investigations with governance**:
 
-This project addresses these gaps by designing an **agent-based investigation system** with **bounded execution, critic-based decision governance, and human-in-the-loop escalation**.
-
----
-
-## Core Idea
-
-Instead of directly predicting fraud labels, the system performs an **explicit investigation process**, similar to how human analysts operate.
-
-Key principles:
-- Evidence-driven reasoning
-- Confidence-aware decisions
-- Policy-compliant automation
-- Safe escalation to human reviewers
+1. **Evidence Agents**: Multiple specialized agents (Transaction, User Behavior, Risk) analyze data in parallel.
+2. **The Critic**: A central agent that calibrates confidence, detects conflicts between agents, and validates reasoning logic.
+3. **The Policy Engine**: A hard-coded safety layer that enforces regulatory rules (e.g., amount limits, high-risk flags) before any decision is actioned.
 
 ---
 
-## System Architecture
+## 🏗️ System Architecture
 
 The system is composed of multiple specialized agents orchestrated via a governed execution graph:
 
-- **Planner Agent** – generates investigation plans under constraints  
-- **Transaction Agent** – detects transaction-level anomalies  
-- **User Behavior Agent** – analyzes deviations from historical patterns  
-- **Risk Agent** – evaluates contextual and geographic risk  
-- **Critic Agent** – aggregates evidence, calibrates confidence, and governs decisions  
-- **Policy Engine** – enforces safety and compliance rules  
-- **Human Review Gate** – escalates low-confidence or policy-violating cases  
+```mermaid
+graph TD
+    A[Transaction Input] --> B[Planner Agent]
+    B --> C[Specialized Analysis Agents]
+    subgraph Parallel Analysis
+        C1[Transaction Agent]
+        C2[User Behavior Agent]
+        C3[Risk Agent]
+    end
+    C --> C1 & C2 & C3
+    C1 & C2 & C3 --> D[Evidence Aggregator]
+    D --> E[Critic Agent]
+    E --> F[Policy Engine]
+    F --> G{Decision Gate}
+    G -- High Confidence --> H[Auto Approval]
+    G -- Low Confidence / Violation --> I[Human Review Gate]
+    I --> J[Final Decision Output]
+```
 
-The architecture ensures **termination guarantees, auditability, and regulatory alignment**.
+### Key Components
+- **Planner Agent**: Orchestrates the investigation steps based on context and budget.
+- **Transaction Agent**: Detects transaction-level anomalies.
+- **User Behavior Agent**: Analyzes deviations from historical patterns.
+- **Risk Agent**: Evaluates contextual and geographic risk.
+- **Critic Agent (Core Innovation)**: Aggregates evidence, performs confidence calibration, and identifies agent disagreements.
+- **Prosecutor & Defender**: A multi-agent debate framework where one agent builds a case for fraud and the other for legitimacy, ensuring bias mitigation.
+- **Policy Engine**: Enforces strict business constraints and regulatory rules (e.g., no auto-approval for transactions > $500k).
+- **Human Review Gate**: Escalates low-confidence or policy-violating cases for human oversight.
 
 ---
 
-## Decision Governance & Safety
+## 🚦 Decision Governance & Safety
 
 A dedicated governance layer ensures:
-- Bounded reasoning steps
-- Explicit confidence thresholds
-- No automated approval under uncertainty
-- Human oversight when required
+- **Bounded Reasoning**: Step limits prevent infinite loops.
+- **Budgeting**: Controls external tool/API usage.
+- **Confidence Calibration**: Explicit thresholds for automated vs. manual decisions.
+- **Policy Compliance**: Hard-coded safety rules that override AI reasoning when necessary.
+- **Human-in-the-Loop**: Mandatory escalation for high-stakes or uncertain cases.
 
 This design aligns with principles of **Explainable AI (XAI)** and **responsible AI deployment** in regulated environments.
 
 ---
 
-## Experimental Setup
+## 📊 Experimental Setup & Evaluation
 
-- **Dataset**: PaySim (synthetic mobile money transaction dataset)
-- **Evaluation Focus**:
-  - Decision outcomes (automation vs. escalation)
-  - Confidence calibration
-  - Escalation behavior
-
-The goal is **decision safety and interpretability**, not raw classification accuracy.
+- **Dataset**: PaySim (synthetic mobile money transaction dataset).
+- **Evaluation Strategy**: We prioritize **Decision Safety** and **Escalation Quality** over simple classification accuracy.
+  - **Confidence Reliability**: How well the system's "certainty" matches actual risk.
+  - **Decision Consistency**: Reproducibility guaranteed via the execution controller.
 
 ---
 
-## Paper Status
+## 🚀 Getting Started
+
+### Prerequisites
+- Python 3.9+
+- OpenRouter API Key (or OpenAI/Anthropic)
+- LangChain & LangGraph
+
+### Installation
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # Add your API keys here
+```
+
+### Running Tests
+```bash
+python run_test.py
+```
+
+### Running Evaluation
+```bash
+python evaluation/evaluation_summary.py
+```
+
+---
+
+## 📄 Paper Status & Authors
 
 **Journal: International Journal of Data Science and Analytics (Under Consideration)**
 Status: Under editorial processing
 
-> This repository will be updated with revisions and camera-ready versions as the review process progresses.
+### Authors
+- **Harsh Satishkumar Patel**  
+  MSc Data Science, Dhirubhai Ambani University (DAU), India  
+  harshpatel080503@gmail.com
+
+- **Urvi Jitendrabhai Kava**  
+  MSc Data Science, Dhirubhai Ambani University (DAU), India  
+  urvikawa2004@gmail.com
 
 ---
 
-## Authors
+## ⚖️ License & Citation
 
-- Harsh Satishkumar Patel
-- MSc Data Science, Dhirubhai Ambani University (DAU), India
-- harshpatel080503@gmail.com
-
-- Urvi Jitendrabhai Kava
-- MSc Data Science, Dhirubhai Ambani University (DAU), India
-- urvikawa2004@gmail.com
-
----
-
-## License
-
-This project is released under the MIT License.
-See the LICENSE file for details.
-
----
-
-## Citation
+This project is released under the **MIT License**.
 
 If you find this work useful, please consider citing the paper (once published):
 ```bibtex
@@ -115,22 +136,4 @@ If you find this work useful, please consider citing the paper (once published):
 ```
 
 ---
-
-## Future Work
-
-Planned extensions include:
-
-- Controlled online learning from analyst feedback
-
-- Formal verification of policy constraints
-
-- Adversarial fraud simulation
-
-- Extension to compliance and audit automation workflows
-
----
-
-## Contributions
-
-Issues, discussions, and constructive feedback are welcome.
-Please open an issue or reach out via email.
+*Built for the next generation of financial safety.*

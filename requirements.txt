@@ -1,0 +1,14 @@
+langchain
+langchain-core>=0.2.0
+langgraph>=0.1.0
+langchain-openai
+langchain-community
+langsmith
+pandas
+numpy
+faiss-cpu
+python-dotenv
+scikit-learn
+scipy
+ollama
+langchain-ollama

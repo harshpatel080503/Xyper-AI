@@ -36,3 +36,4 @@ class InvestigationState(TypedDict):
     memory: MemoryManager
     max_steps: int
     steps_taken: int
+    historical_data: Any

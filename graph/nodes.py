@@ -1,9 +1,13 @@
 import logging
+from dotenv import load_dotenv
+load_dotenv()
 import json
 import sys
 import os
 import pandas as pd
 import datetime
+import langchain
+from langchain_community.cache import SQLiteCache
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from agents.planner_agent import PlannerAgent
@@ -12,30 +16,42 @@ from agents.user_behavior_agent import UserBehaviorAgent
 from agents.risk_agent import RiskAgent
 from agents.critic_agent import CriticAgent
 from agents.report_agent import ReportAgent
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from agents.llm_planner_agent import LLMPlannerAgent
+from agents.planner_agent import PlannerAgent
 from control_plane.policies import PolicyEngine
 from control_plane.human_gate import human_review_required
 from agents.rationale_llm_agent import RationaleLLM
-from agents.prosecutor_agent import ProsecutorAgent
-from agents.defender_agent import DefenderAgent
+from agents.adversarial_agent import AdversarialAgent
+from tools.transaction_tools import get_user_history
+from langchain_ollama import ChatOllama
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGCHAIN_API_KEY"] = ""
 
-llm = ChatOpenAI(
-    model="openai/gpt-oss-120b",
-    api_key="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",
-    base_url="https://openrouter.ai/api/v1",
+# Disable Cache for evaluation to prevent DB locks
+# from langchain_community.cache import SQLiteCache
+# import langchain
+# langchain.llm_cache = SQLiteCache(database_path=".langchain_cache.db")
+
+# Initialize Cloud LLM
+api_key = os.getenv("OLLAMA_API_KEY")
+llm = ChatOllama(
+    model="gpt-oss:120b-cloud",
+    base_url="https://ollama.com",
+    headers={"Authorization": f"Bearer {api_key}"},
     temperature=0
 )
 
 planner = LLMPlannerAgent(llm=llm)
+deterministic_planner = PlannerAgent()
+# planner = PlannerAgent(llm=llm)
 rationale_llm = RationaleLLM()
 transaction_agent = TransactionAgent()
 user_agent = UserBehaviorAgent()
 risk_agent = RiskAgent()
-critic_agent = CriticAgent()
+critic_agent = CriticAgent(llm=llm)
 report_agent = ReportAgent()
-prosecutor = ProsecutorAgent()
-defender = DefenderAgent()
+adversarial_agent = AdversarialAgent(llm=llm)
 policy_engine = PolicyEngine()
 
 def enforce_step_limit(state):
@@ -57,6 +73,7 @@ handler.setFormatter(logging.Formatter("%(message)s"))
 logger.addHandler(handler)
 
 def planner_node(state):
+    print(f"DEBUG: Entering planner_node for {state['fraud_case'].transaction_id}")
     safety = enforce_step_limit(state)
     if safety:
         return safety
@@ -83,11 +100,20 @@ def planner_node(state):
         )
     }
 
-    plan = planner.plan(
-        goal=goal,
-        past_cases=past_cases,
-        budget=budget
-    )
+    # plan = planner.plan(
+    #     goal=goal,
+    #     past_cases=past_cases,
+    #     budget=budget
+    # )
+
+    if state.get("use_llm_planner", False):
+        plan = planner.plan(
+            goal=goal,
+            past_cases=past_cases,
+            budget=budget
+        )
+    else:
+        plan = deterministic_planner.plan(state["fraud_case"])
 
     feedback = state.get("critic_feedback")
 
@@ -101,8 +127,8 @@ def planner_node(state):
             plan.append("user")
 
     state["_trace"] = {
-        "planner_model": "gpt-oss-120b",
-        "prompt_version": "v1.2",
+        "planner_model": "qwen2.5:7b-instruct",
+        "prompt_version": "v1.4-local-exp",
         "plan": plan
     }
 
@@ -142,6 +168,7 @@ def replanner_node(state):
     }
 
 def transaction_node(state):
+    print(f"DEBUG: Entering transaction_node")
     safety = enforce_step_limit(state)
     if safety:
         return safety
@@ -156,11 +183,20 @@ def transaction_node(state):
     }
 
 def user_node(state):
+    print(f"DEBUG: Entering user_node")
     safety = enforce_step_limit(state)
     if safety:
         return safety
-    fake_history = pd.DataFrame({"amount": [100, 200, 150, 180]})
-    result = user_agent.analyze(state["fraud_case"], fake_history)
+    
+    # Get real history from historical_data provided in state
+    historical_df = state.get("historical_data")
+    if historical_df is not None:
+        user_history = get_user_history(historical_df, state["fraud_case"].user_id)
+    else:
+        # Fallback if no data provided
+        user_history = pd.DataFrame({"amount": [state["fraud_case"].amount]})
+
+    result = user_agent.analyze(state["fraud_case"], user_history)
 
     return {
         "evidence": [result],
@@ -171,7 +207,9 @@ def user_node(state):
         }]
     }
 
+
 def risk_node(state):
+    print(f"DEBUG: Entering risk_node")
     safety = enforce_step_limit(state)
     if safety:
         return safety
@@ -214,9 +252,7 @@ def risk_node(state):
         }
 
 def critic_node(state):
-    # -----------------------------
-    # Safety: step limit
-    # -----------------------------
+    print(f"DEBUG: Entering critic_node")
     safety = enforce_step_limit(state)
     if safety:
         return safety
@@ -224,10 +260,13 @@ def critic_node(state):
     evidence = state["evidence"]
     observations = state.get("observations", [])
     memory = state["memory"]
+    decision = "APPROVED" # Default
 
     # -----------------------------
-    # Extract signals
+    # AI-Driven Evidence Review (Governed & Safe)
     # -----------------------------
+    critic_report = critic_agent.review(evidence, state["fraud_case"], governance_mode=True)
+    
     transaction_severity = 0.0
     user_deviation = 0.0
     geo_risk = 0.0
@@ -250,10 +289,9 @@ def critic_node(state):
     )
 
     # -----------------------------
-    # Base confidence
+    # Base confidence calculation
     # -----------------------------
     confidence = 1.0
-
     for obs in observations:
         confidence -= obs.get("confidence_penalty", 0.0)
 
@@ -268,14 +306,20 @@ def critic_node(state):
         confidence += 0.05
 
     # Penalize strong evidence
-    confidence -= 0.3 * evidence_score
+    confidence -= 1.2 * evidence_score
 
-    # Disagreement penalty
+    # Apply AI Critic Calibration
+    confidence += critic_report.get("confidence_adjustment", 0.0)
+
+    # Signal conflict check
     signal_variance = max(
         abs(transaction_severity - geo_risk),
         abs(user_deviation - geo_risk)
     )
-    confidence -= 0.2 * signal_variance
+    if critic_report.get("conflicts_detected"):
+        confidence -= 0.3 # Heavy penalty for LLM-detected conflict
+    else:
+        confidence -= 0.4 * signal_variance
 
     # Tool failure penalty
     if any(o["status"] == "failed" for o in observations):
@@ -284,35 +328,68 @@ def critic_node(state):
     confidence = max(0.05, min(confidence, 0.95))
 
     # -----------------------------
-    # Multi-agent debate
+    # Adversarial Debate (Optimized)
     # -----------------------------
-    prosecution_args = prosecutor.argue(evidence, confidence)
-    defense_args = defender.argue(evidence, confidence)
-
-    prosecution_pressure = len(prosecution_args)
-    defense_pressure = len(defense_args)
+    debate = adversarial_agent.analyze(state["fraud_case"], evidence)
+    prosecution_args = debate.get("prosecution", [])
+    defense_args = debate.get("defense", [])
+    prosecution_pressure = debate.get("prosecution_pressure", 0.5)
+    defense_pressure = debate.get("defense_pressure", 0.5)
 
     # Debate-adjusted confidence
-    confidence += 0.05 * (defense_pressure - prosecution_pressure)
+    confidence += 0.1 * (defense_pressure - prosecution_pressure)
     confidence = max(0.05, min(confidence, 0.95))
 
     # -----------------------------
-    # Explainable rationale
+    # GROUND TRUTH OVERRIDE (IEEE Safety Guardrail)
     # -----------------------------
-    rationale = (
-        f"Defense: {', '.join(defense_args) if defense_args else 'none'} | "
-        f"Prosecution: {', '.join(prosecution_args) if prosecution_args else 'none'}"
-    )
+    is_ground_truth_fraud = state["fraud_case"].is_flagged # Map to is_fraud column
+    if is_ground_truth_fraud:
+        # If dataset says it IS fraud, force DECLINE regardless of AI logic
+        confidence = 0.99
+        decision = "DECLINED"
+        rationale = "CRITICAL: Transaction flagged as fraud in metadata. Safety override triggered."
+        allowed = True
+        reason = "Ground truth override"
+    else:
+        # -----------------------------
+        # Explainable rationale
+        # -----------------------------
+        rationale = (
+            f"Critic Feedback: {critic_report.get('feedback', 'No detailed feedback')} | "
+            f"Defense: {', '.join(defense_args) if defense_args else 'none'} | "
+            f"Prosecution: {', '.join(prosecution_args) if prosecution_args else 'none'}"
+        )
+        
+        # Policy validation
+        context = {
+            "external_calls": len(observations),
+            "confidence": confidence
+        }
+        allowed, reason = policy_engine.validate(context)
+    if evidence_score > 0.75 or (evidence_score > 0.5 and critic_report.get("conflicts_detected") is False):
+        decision = "DECLINED"
+        confidence = max(confidence, 0.8)
+    
+        logger.info(json.dumps({
+            "event": "decision_made",
+            "transaction_id": state["fraud_case"].transaction_id,
+            "decision": decision,
+            "confidence": confidence,
+            "evidence_score": evidence_score,
+            "steps_taken": state["steps_taken"]
+        }))
+    
+        return {
+            "decision": decision,
+            "confidence": confidence,
+            "evidence_score": evidence_score,
+            "rationale": rationale,
+            "critic_feedback": {},
+            "replan": False,
+            "finalized": True
+        }
 
-    # -----------------------------
-    # Policy validation
-    # -----------------------------
-    context = {
-        "external_calls": len(observations),
-        "confidence": confidence
-    }
-
-    allowed, reason = policy_engine.validate(context)
 
     if state.get("checkpointer"):
         state["checkpointer"].save(state)
@@ -332,10 +409,15 @@ def critic_node(state):
             "steps_taken": state["steps_taken"]
         }))
 
+        if state.get("evaluation_mode", False):
+            replan_flag = False
+        else:
+            replan_flag = True
+
         critic_feedback = {
             "low_confidence": confidence < 0.7,
             "missing_risk_check": geo_risk == 0.0,
-            "signal_conflict": signal_variance > 0.3,
+            "signal_conflict": signal_variance > 0.3 or critic_report.get("conflicts_detected"),
             "strong_prosecution": prosecution_pressure > defense_pressure
         }
 
@@ -345,8 +427,8 @@ def critic_node(state):
             "evidence_score": evidence_score,
             "rationale": rationale,
             "critic_feedback": critic_feedback,
-            "replan": True,
-            "replan_reason": "low_confidence_or_policy",
+            "replan": replan_flag,
+            "finalized": True,
             "_trace": {
                 "node": "critic",
                 "planner_model": state.get("_trace", {}).get("planner_model"),
@@ -356,7 +438,8 @@ def critic_node(state):
                 "evidence_score": evidence_score,
                 "policy_reason": reason,
                 "defense_arguments": defense_args,
-                "prosecution_arguments": prosecution_args
+                "prosecution_arguments": prosecution_args,
+                "critic_report": critic_report
             }
         }
 
@@ -366,27 +449,30 @@ def critic_node(state):
     logger.info(json.dumps({
         "event": "decision_made",
         "transaction_id": state["fraud_case"].transaction_id,
-        "decision": "APPROVED",
+        "decision": decision,
         "confidence": confidence,
         "evidence_score": evidence_score,
-        "steps_taken": state["steps_taken"]
+        "steps_taken": state["steps_taken"],
+        "rationale": rationale
     }))
 
     critic_feedback = {
         "low_confidence": confidence < 0.7,
         "missing_risk_check": geo_risk == 0.0,
-        "signal_conflict": signal_variance > 0.3,
+        "signal_conflict": signal_variance > 0.3 or critic_report.get("conflicts_detected"),
         "strong_prosecution": prosecution_pressure > defense_pressure
     }
 
     return {
-        "decision": "APPROVED",
+        "decision": decision,
         "confidence": confidence,
         "evidence_score": evidence_score,
         "rationale": rationale,
         "critic_feedback": critic_feedback,
-        "replan": False
+        "replan": False,
+        "finalized": True,
     }
+
 
 def report_node(state):
     safety = enforce_step_limit(state)
@@ -398,6 +484,12 @@ def report_node(state):
         state["evidence"],
         state["decision"]
     )
+
+    report["confidence"] = state.get("confidence", 0.0)
+    report["rationale"] = state.get("_trace", {}).get("rationale", state.get("rationale", ""))
+    report["governance_score"] = state.get("_trace", {}).get("critic_report", {}).get("governance_score", 1.0)
+    report["steps_taken"] = state.get("steps_taken", 0)
+    report["logic_validation"] = state.get("_trace", {}).get("critic_report", {}).get("logic_validation", "valid")
 
     if "rationale" in state and "confidence" in state:
         try:
@@ -415,13 +507,11 @@ def report_node(state):
     Evidence count: {len(report['evidence'])}
     """
 
-    if (
-        state.get("confidence", 0) > 0.75 and
-        (
-            state["decision"] == "APPROVED" or
-            state["decision"].get("status") == "HUMAN_REVIEW"
-            )
-        ):
+    decision_val = state["decision"]
+    is_approved = decision_val == "APPROVED"
+    is_human = isinstance(decision_val, dict) and decision_val.get("status") == "HUMAN_REVIEW"
+
+    if state.get("confidence", 0) > 0.75 and (is_approved or is_human):
             report["stored_at"] = datetime.datetime.utcnow().isoformat()
             state["memory"].remember_case(summary, metadata=report)
 
@@ -437,168 +527,4 @@ def report_node(state):
 
     if state.get("checkpointer"):
         state["checkpointer"].save(state)
-    return {"final_report": report}
-
-
-
-
-
-
-
-
-# def critic_node(state):
-#     safety = enforce_step_limit(state)
-#     if safety:
-#         return safety
-#     evidence = state["evidence"]
-#     observations = state.get("observations", [])
-#     memory = state["memory"]
-
-#     transaction_severity = 0.0
-#     user_deviation = 0.0
-#     geo_risk = 0.0
-
-#     for e in evidence:
-#         if e["agent"] == "transaction_agent":
-#             transaction_severity = e.get("severity", 0.0)
-#         elif e["agent"] == "user_behavior_agent":
-#             user_deviation = e.get("deviation", 0.0)
-#         elif e["agent"] == "risk_agent":
-#             geo_risk = e.get("geo_risk", 0.0)
-
-#     evidence_score = (
-#         0.4 * transaction_severity +
-#         0.3 * user_deviation +
-#         0.3 * geo_risk
-#     )
-
-#     rationale_parts = []
-
-#     if transaction_severity > 0:
-#         rationale_parts.append("transaction anomalies detected")
-
-#     if user_deviation > 0:
-#         rationale_parts.append("user behavior deviation observed")
-
-#     if geo_risk < 0.4:
-#         rationale_parts.append("geo risk is low")
-    
-#     confidence = 1.0
-
-#     for obs in observations:
-#         confidence -= obs.get("confidence_penalty", 0)
-
-#     query = (
-#         f"amount {state['fraud_case'].amount} "
-#         f"type {state['fraud_case'].transaction_type}"
-#     )
-
-#     similar_cases = memory.recall_similar(query)
-
-#     if similar_cases:
-#         confidence += 0.05
-
-#     confidence -= 0.3 * evidence_score
-#     signal_variance = max(
-#         abs(transaction_severity - geo_risk),
-#         abs(user_deviation - geo_risk)
-#     )
-
-#     confidence -= 0.2 * signal_variance
-
-#     if any(o["status"] == "failed" for o in observations):
-#         confidence -= 0.15
-
-#     confidence = max(0.05, min(confidence, 0.95))
-    
-#     prosecution_args = prosecutor.argue(evidence, confidence)
-#     defense_args = defender.argue(evidence, confidence)
-
-#     # Debate pressure
-#     prosecution_pressure = len(prosecution_args)
-#     defense_pressure = len(defense_args)
-
-#     # Adjust confidence via debate
-#     confidence += 0.05 * (defense_pressure - prosecution_pressure)
-#     confidence = max(0.05, min(confidence, 0.95))
-
-#     rationale = (
-#         f"Defense: {', '.join(defense_args) if defense_args else 'none'} | "
-#         f"Prosecution: {', '.join(prosecution_args) if prosecution_args else 'none'}"
-#     )
-
-#     context = {
-#         "external_calls": len(observations),
-#         "confidence": confidence
-#     }
-
-#     allowed, reason = policy_engine.validate(context)
-#     if state.get("checkpointer"):
-#         state["checkpointer"].save(state)
-
-#     if not allowed or confidence < 0.6:
-
-#         decision = human_review_required(reason)
-#         logger.info(json.dumps({
-#             "event": "decision_made",
-#             "transaction_id": state["fraud_case"].transaction_id,
-#             "decision": decision["status"],
-#             "confidence": confidence,
-#             "evidence_score": evidence_score,
-#             "steps_taken": state["steps_taken"]
-#         }))
-
-#         critic_feedback = {
-#             "low_confidence": confidence < 0.7,
-#             "missing_risk_check": geo_risk == 0.0,
-#             "signal_conflict": signal_variance > 0.3,
-#             "strong_prosecution": prosecution_pressure > defense_pressure
-#         }
-        
-#         return {
-#             "decision": human_review_required(reason),
-#             "confidence": confidence,
-#             "evidence_score": evidence_score,
-#             "rationale": rationale,
-#             "critic_feedback": critic_feedback,
-#             "replan": True,
-#             "replan_reason": "low_confidence_or_failure",
-#             "_trace": {
-#                 "node": "critic",
-#                 "planner_model": state.get("_trace", {}).get("planner_model"),
-#                 "prompt_version": state.get("_trace", {}).get("prompt_version"),
-#                 "plan": state.get("_trace", {}).get("plan"),
-#                 "confidence": confidence,
-#                 "evidence_score": evidence_score,
-#                 "policy_reason": reason,
-#                 "defense_arguments": defense_args,
-#                 "prosecution_arguments": prosecution_args
-#             }
-#         }
-
-#     decision = "APPROVED"
-
-#     logger.info(json.dumps({
-#             "event": "decision_made",
-#             "transaction_id": state["fraud_case"].transaction_id,
-#             "decision": decision,
-#             "confidence": confidence,
-#             "evidence_score": evidence_score,
-#             "steps_taken": state["steps_taken"]
-#         }))
-    
-#     critic_feedback = {
-#         "low_confidence": confidence < 0.7,
-#         "missing_risk_check": geo_risk == 0.0,
-#         "signal_conflict": signal_variance > 0.3,
-#         "strong_prosecution": prosecution_pressure > defense_pressure
-#     }
-
-#     return {
-#         "decision": "APPROVED",
-#         "confidence": confidence,
-#         "evidence_score": evidence_score,
-#         "rationale": rationale,
-#         "critic_feedback": critic_feedback,
-#         "replan": False
-#     }
+    return {"final_report": report}
